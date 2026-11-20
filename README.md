@@ -1,12 +1,14 @@
 # zync
 
-**Settings Sync for Zed** — same mental model as VS Code:
+**Settings Sync for Zed** — same idea as VS Code, as a standalone Rust CLI:
 
-1. Turn it on  
-2. Sign in once  
-3. Sync when you want (`zync sync`)
+1. `zync on` — sign in with `gh`, create/find a private store repo  
+2. Edit settings in Zed as usual  
+3. `zync sync` when you want to push/pull  
 
-Uses your **GitHub CLI (`gh`) account** (the one you use for git). Zed’s own Sign In can’t power this yet (`read:user` only, not exposed to extensions).
+Auth uses your **GitHub CLI (`gh`)** account (the one you use for git). Zed Sign In is not enough for this yet.
+
+Sync is **on demand** (no background `watch`). Comparison is by **content hash** (SHA-256), not by date. On conflict, **remote wins**; the previous local file is kept as `.bak-zync-*`.
 
 ## Install
 
@@ -14,22 +16,27 @@ Uses your **GitHub CLI (`gh`) account** (the one you use for git). Zed’s own S
 cargo install --path .
 ```
 
-Or build a release binary:
+Or:
 
 ```bash
 cargo build --release
-# target/release/zync
+# target/release/zync   (Windows: target/release/zync.exe)
 ```
 
 ## Commands
 
 ```bash
-zync on          # Turn on Settings Sync
-zync off         # Turn off on this machine
-zync sync        # Sync now
-zync status      # On/off + pending changes
-zync login       # Sign in with gh
+zync              # status if on, else hint to run `zync on`
+zync on           # turn on (sign in + first sync)
+zync on --threads # also enable agent chat history (Phase 2, not implemented yet)
+zync on --repo owner/name   # override store repo (default: <you>/zync-store)
+zync off          # turn off on this machine (cloud data kept)
+zync sync         # sync now
+zync status       # on/off + pending changes
+zync login        # sign in with gh
 ```
+
+Aliases: `on`/`enable`, `off`/`disable`.
 
 ### First machine
 
@@ -43,36 +50,44 @@ zync sync
 ### Second machine
 
 ```bash
-zync on      # same GitHub user → downloads your settings
+zync on    # same GitHub user → pulls existing store
 zync sync
 ```
 
-That’s it. No pasting tokens into `settings.json`.
+Reload Zed after a download if it was open.
 
 ## What syncs (defaults)
 
-| Category | Default |
-|---|---|
-| Settings | on |
-| Keybindings | on |
-| Tasks / debug tasks | on |
-| Extensions (`auto_install_extensions`) | on |
-| Agent chat history | **off** (`zync on --threads` to enable later) |
+| Category | Default | Notes |
+|---|---|---|
+| Settings | on | `settings.json` |
+| Keybindings | on | `keymap.json` |
+| Tasks / debug | on | `tasks.json`, `debug.json` |
+| Extensions | on | merges installed IDs into `auto_install_extensions` |
+| Agent chat history | **off** | store format ready; export/import not implemented yet |
 
-## How it compares to VS Code
+Store layout lives in a private GitHub repo (default `<you>/zync-store`): `manifest.json` + `config/*`.
 
-| VS Code | zync today |
+## VS Code → zync
+
+| VS Code | zync |
 |---|---|
 | Account Sign In | `gh auth` / `zync login` |
 | Turn On Settings Sync | `zync on` |
 | Sync Now | `zync sync` |
-| Always-on background | not yet (later with a Zed extension) |
-| Conflict UI | backups (`.bak-zync-*`) + remote wins on conflict |
+| Always-on background | not yet (possible later via a Zed extension) |
+| Conflict UI | `.bak-zync-*` backups + remote wins |
 
-A Zed UI toggle (“Settings Sync: Turn On”) is the next step once this CLI path is solid — extensions can’t do it alone with the current API.
+A Zed UI toggle is a later step: a thin extension would call this binary. Extensions alone can’t do full settings sync with the current API.
 
 ## Requirements
 
-- Rust (for building) / a `zync` binary
-- [GitHub CLI](https://cli.github.com)
-- git
+- [Rust](https://rustup.rs) (to build) or a prebuilt `zync` binary  
+- [GitHub CLI](https://cli.github.com) (`gh auth login`)  
+- `git`
+
+## Agent / contributor notes
+
+- `AGENTS.md` — plan-before-code, keep docs in sync, `.ai/` layout  
+- `.ai/state.md` — current focus / next (not a changelog)  
+- `.ai/skills/` — optional topic skills (e.g. Zed API), added when needed  
