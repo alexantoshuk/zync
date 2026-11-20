@@ -72,6 +72,8 @@ Progress lines go to **stderr** (`… …`).
 
 Zed’s own Sign In is not used. Identity = current `gh` user. Interactive `gh auth login` only if no session; otherwise confirm reuse.
 
+If `gh` is not installed, `init` / `login` explain that and offer to install it (`winget` on Windows, `brew` on macOS, `apt-get` on Linux when available); `--yes` accepts the offer. Before offering install, also look for an already-installed `gh` outside the current PATH (common after winget: `C:\Program Files\GitHub CLI`, plus Machine/User Path from the registry). Manual install: https://cli.github.com.
+
 ## Long-term shape
 
 ```

@@ -97,7 +97,7 @@ A Zed UI toggle is a later step: a thin extension would call this binary. Extens
 ## Requirements
 
 - [Rust](https://rustup.rs) (to build) or a prebuilt `zync` binary  
-- [GitHub CLI](https://cli.github.com) (`gh auth login`)  
+- [GitHub CLI](https://cli.github.com) (`gh`) — `zync init` / `zync login` offer to install if missing (`winget` / `brew` / `apt`), then `gh auth login`  
 - `git`
 
 ## Agent / contributor notes
