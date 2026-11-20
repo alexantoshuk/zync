@@ -8,7 +8,7 @@
 
 Auth uses your **GitHub CLI (`gh`)** account (the one you use for git). Zed Sign In is not enough for this yet. Reusing an existing `gh` session, creating/using the store repo, or deleting the remote all ask for confirmation (skip with `--yes`).
 
-Sync is **on demand** (no background watcher). Comparison is by **content hash** (SHA-256), not by date. On conflict, **remote wins**; the previous local file is kept as `.bak-zync-*`. Store refresh (`git fetch` + hard reset) is shared: within **120s** after a fetch/push, `sync`/`status` skip another fetch (use `--refresh` to force). Progress on stderr.
+Sync is **on demand** (no background watcher). Comparison is by **content hash** (SHA-256), not by date. On conflict, **remote wins** by default (local backup `.bak-zync-*`); overwrite cloud with `zync sync --force-push`. Store refresh (`git fetch` + hard reset) is shared: within **120s** after a fetch/push, `sync`/`status` skip another fetch (use `--refresh` to force). Progress on stderr.
 
 ## Install
 
@@ -33,6 +33,8 @@ zync init --repo owner/name   # override store (default: <you>/zync-store)
 zync init --yes         # skip confirmation prompts
 zync sync               # sync now (push/pull settings)
 zync sync --refresh     # force git fetch even if store was refreshed recently
+zync sync --force-push  # overwrite cloud with local (even if cloud is newer; confirms)
+zync sync --force-push --yes
 zync status             # initialized? + pending changes
 zync status --refresh   # force git fetch
 zync login              # sign in with gh (confirms before reusing existing session)

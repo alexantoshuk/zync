@@ -12,6 +12,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use commands::init::InitOptions;
 use commands::purge::PurgeOptions;
 use commands::status::LoginOptions;
+use commands::sync::CmdSyncOptions;
 use commands::{cmd_init, cmd_login, cmd_purge, cmd_status, cmd_sync};
 
 #[derive(Parser)]
@@ -53,6 +54,12 @@ enum Commands {
         /// Force git fetch even if store was refreshed recently
         #[arg(long)]
         refresh: bool,
+        /// Overwrite cloud with local settings (skip pull; confirms unless --yes)
+        #[arg(long)]
+        force_push: bool,
+        /// Skip confirmation for --force-push
+        #[arg(long)]
+        yes: bool,
     },
     /// Show whether sync is initialized and if anything is pending
     Status {
@@ -93,7 +100,15 @@ fn run() -> Result<()> {
             yes,
         }),
         Some(Commands::Purge { remote, yes }) => cmd_purge(PurgeOptions { remote, yes }),
-        Some(Commands::Sync { refresh }) => cmd_sync(refresh),
+        Some(Commands::Sync {
+            refresh,
+            force_push,
+            yes,
+        }) => cmd_sync(CmdSyncOptions {
+            refresh,
+            force_push,
+            yes,
+        }),
         Some(Commands::Status { refresh }) => cmd_status(refresh),
         Some(Commands::Login { yes }) => cmd_login(LoginOptions { yes }),
     }

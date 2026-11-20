@@ -21,59 +21,72 @@ pub struct SyncResult {
     pub downloaded: Vec<String>,
 }
 
+pub struct SyncOptions {
+    pub force_refresh: bool,
+    /// Skip pull; push local over remote even when remote differs.
+    pub force_push: bool,
+}
+
 /// One-shot sync like VS Code "Settings Sync: Sync Now".
-pub fn sync_now(force_refresh: bool) -> Result<SyncResult> {
+pub fn sync_now(options: SyncOptions) -> Result<SyncResult> {
     progress("loading local config");
     let mut cfg = require_enabled_config()?;
     let mut uploaded = Vec::new();
     let mut downloaded = Vec::new();
 
     if cfg.wants_config_sync() {
-        let dir = prepare_store_dir(&cfg, force_refresh)?;
+        let dir = prepare_store_dir(&cfg, options.force_refresh)?;
 
-        progress("checking remote store");
-        let has_remote = remote_has_synced_data(&dir)?;
-        let diffs = if has_remote {
-            progress("comparing local vs remote");
-            diff_config(&cfg, &dir)?
-        } else {
-            progress("remote store empty or missing synced data");
-            Vec::new()
-        };
-
-        let any_different = diffs.iter().any(|d| {
-            matches!(
-                d.status,
-                DiffStatus::LocalNewerOrDifferent | DiffStatus::LocalOnly | DiffStatus::RemoteOnly
-            )
-        });
-        let all_same = has_remote
-            && !diffs.is_empty()
-            && diffs
-                .iter()
-                .all(|d| matches!(d.status, DiffStatus::Same | DiffStatus::Missing));
-
-        if !has_remote {
-            progress("uploading local config (first push)");
+        if options.force_push {
+            progress("force-push: uploading local config (skipping pull)");
             uploaded.extend(push_config(&cfg, &dir)?);
-        } else if all_same && !any_different {
-            progress("already in sync");
         } else {
-            let remote_only_or_different = diffs.iter().any(|d| {
+            progress("checking remote store");
+            let has_remote = remote_has_synced_data(&dir)?;
+            let diffs = if has_remote {
+                progress("comparing local vs remote");
+                diff_config(&cfg, &dir)?
+            } else {
+                progress("remote store empty or missing synced data");
+                Vec::new()
+            };
+
+            let any_different = diffs.iter().any(|d| {
                 matches!(
                     d.status,
-                    DiffStatus::RemoteOnly | DiffStatus::LocalNewerOrDifferent
+                    DiffStatus::LocalNewerOrDifferent
+                        | DiffStatus::LocalOnly
+                        | DiffStatus::RemoteOnly
                 )
             });
-            let local_only = diffs.iter().any(|d| d.status == DiffStatus::LocalOnly);
+            let all_same = has_remote
+                && !diffs.is_empty()
+                && diffs
+                    .iter()
+                    .all(|d| matches!(d.status, DiffStatus::Same | DiffStatus::Missing));
 
-            if remote_only_or_different {
-                progress("pulling remote config");
-                downloaded.extend(pull_config(&cfg, &dir)?);
-            }
-            if local_only || remote_only_or_different {
-                progress("pushing local config");
+            if !has_remote {
+                progress("uploading local config (first push)");
                 uploaded.extend(push_config(&cfg, &dir)?);
+            } else if all_same && !any_different {
+                progress("already in sync");
+            } else {
+                let remote_only_or_different = diffs.iter().any(|d| {
+                    matches!(
+                        d.status,
+                        DiffStatus::RemoteOnly | DiffStatus::LocalNewerOrDifferent
+                    )
+                });
+                let local_only = diffs.iter().any(|d| d.status == DiffStatus::LocalOnly);
+
+                if remote_only_or_different {
+                    progress("pulling remote config");
+                    downloaded.extend(pull_config(&cfg, &dir)?);
+                }
+                if local_only || remote_only_or_different {
+                    progress("pushing local config");
+                    uploaded.extend(push_config(&cfg, &dir)?);
+                }
             }
         }
     }

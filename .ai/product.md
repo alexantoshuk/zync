@@ -7,7 +7,7 @@
 - **Transport:** private GitHub repo (default `<gh-login>/zync-store`) via `git` + **GitHub CLI (`gh`)** auth  
 - **Mode:** on demand only — no background watcher  
 - **Compare:** SHA-256 of normalized file contents (not mtime)  
-- **Conflicts:** remote wins; previous local file saved as `.bak-zync-*`  
+- **Conflicts:** remote wins by default; previous local file saved as `.bak-zync-*`. Override with `zync sync --force-push` (local overwrites cloud)  
 - **Future:** thin Zed extension may shell out to this binary; full sync inside WASM extensions is not viable with current Zed APIs  
 
 ## Commands (behavior)
@@ -16,7 +16,7 @@
 |---|---|
 | `zync` | Print help and exit |
 | `zync init` | Setup only: confirm/`gh` session, create or select store repo, write local zync config. **Does not sync** |
-| `zync sync` | Refresh store (fetch unless fresh), compare hashes, pull and/or push. `--refresh` forces fetch |
+| `zync sync` | Refresh store (fetch unless fresh), compare hashes, pull and/or push. `--refresh` forces fetch. `--force-push` skips pull and overwrites cloud with local (confirm / `--yes`) |
 | `zync status` | Show init state + pending diffs against store clone. Reuses recent refresh; `--refresh` forces fetch |
 | `zync login` | Ensure `gh` auth (confirm before reusing existing session) |
 | `zync purge` | Print plan + confirm; delete local config + store cache. `--remote` also deletes GitHub repo |
@@ -58,11 +58,12 @@ threads/…              # Phase 2 (not implemented)
 1. Load local zync config (must be initialized).  
 2. **Prepare store dir:** clone if missing; else if last refresh older than **TTL 120s** (or `--refresh`) → `git fetch` + checkout + `reset --hard origin/<branch>`; if still fresh → skip fetch (local checkout/reset only). Stamp lives in `.git/zync-last-refresh` (shared by `sync` and `status`). Successful push also updates the stamp.  
 3. Read remote `manifest.json` hashes; hash local Zed files.  
-4. Decide:
+4. Decide (unless `--force-push`):
    - no remote hashes → push local  
    - all same → no-op  
    - remote-only / different → pull (backup locals), then push  
    - local-only → push  
+   With `--force-push`: skip pull; always push local over remote (after confirm).  
 5. Update `lastSyncedAt`.  
 
 Progress lines go to **stderr** (`… …`).

@@ -1,8 +1,26 @@
-use crate::sync::engine::{sync_now, SyncAction};
-use anyhow::Result;
+use crate::sync::engine::{sync_now, SyncAction, SyncOptions};
+use crate::util::confirm_or_yes;
+use anyhow::{bail, Result};
 
-pub fn cmd_sync(force_refresh: bool) -> Result<()> {
-    let result = sync_now(force_refresh)?;
+pub struct CmdSyncOptions {
+    pub refresh: bool,
+    pub force_push: bool,
+    pub yes: bool,
+}
+
+pub fn cmd_sync(options: CmdSyncOptions) -> Result<()> {
+    if options.force_push {
+        let prompt =
+            "Overwrite cloud store with LOCAL settings (even if cloud is newer)? This cannot be undone easily.";
+        if !confirm_or_yes(prompt, options.yes)? {
+            bail!("Aborted.");
+        }
+    }
+
+    let result = sync_now(SyncOptions {
+        force_refresh: options.refresh,
+        force_push: options.force_push,
+    })?;
     match result.action {
         SyncAction::InSync => println!("In sync."),
         SyncAction::Uploaded => {
@@ -11,7 +29,11 @@ pub fn cmd_sync(force_refresh: bool) -> Result<()> {
             } else {
                 result.uploaded.join(", ")
             };
-            println!("Uploaded: {list}");
+            if options.force_push {
+                println!("Force-pushed: {list}");
+            } else {
+                println!("Uploaded: {list}");
+            }
         }
         SyncAction::Downloaded => {
             println!("Downloaded: {}", result.downloaded.join(", "));
