@@ -1,6 +1,6 @@
 use crate::paths::zync_cache_dir;
 use crate::store::LocalConfig;
-use crate::util::{path_exists, read_text_if_exists, write_text};
+use crate::util::{path_exists, progress, read_text_if_exists, write_text};
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -39,8 +39,17 @@ pub fn ensure_store_clone(cfg: &LocalConfig) -> Result<PathBuf> {
     let git_dir = dir.join(".git");
 
     if path_exists(&git_dir) {
+        progress(&format!(
+            "git fetch origin/{} ({})",
+            cfg.remote.branch, cfg.remote.repo
+        ));
         run_git(&dir, &["fetch", "origin", &cfg.remote.branch])?;
+        progress(&format!("git checkout {}", cfg.remote.branch));
         run_git(&dir, &["checkout", &cfg.remote.branch])?;
+        progress(&format!(
+            "git pull --ff-only origin/{}",
+            cfg.remote.branch
+        ));
         run_git(
             &dir,
             &["pull", "--ff-only", "origin", &cfg.remote.branch],
@@ -52,6 +61,7 @@ pub fn ensure_store_clone(cfg: &LocalConfig) -> Result<PathBuf> {
         std::fs::create_dir_all(parent)?;
     }
     let url = format!("https://github.com/{}.git", cfg.remote.repo);
+    progress(&format!("git clone {url}"));
     let output = Command::new("git")
         .args([
             "clone",
@@ -86,12 +96,16 @@ pub fn init_empty_store_repo(cfg: &LocalConfig, readme: &str) -> Result<PathBuf>
 }
 
 pub fn commit_and_push(dir: &Path, message: &str, branch: &str) -> Result<()> {
+    progress("git add");
     run_git(dir, &["add", "-A"])?;
     let status = run_git(dir, &["status", "--porcelain"])?;
     if status.is_empty() {
+        progress("nothing to commit");
         return Ok(());
     }
+    progress(&format!("git commit ({message})"));
     run_git(dir, &["commit", "-m", message])?;
+    progress(&format!("git push origin/{branch}"));
     run_git(dir, &["push", "-u", "origin", branch])?;
     Ok(())
 }

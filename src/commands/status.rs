@@ -1,29 +1,37 @@
-use crate::auth::{ensure_gh_auth, gh_login};
+use crate::auth::{gh_login, interactive_login};
 use crate::config::load_local_config;
 use crate::sync::config::{diff_config, DiffStatus};
 use crate::sync::threads::{threads_db_available, threads_db_location};
+use crate::util::progress;
 use anyhow::Result;
 
+pub struct LoginOptions {
+    pub yes: bool,
+}
+
 pub fn cmd_status() -> Result<()> {
+    progress("checking GitHub CLI login");
     let login = gh_login().ok();
+    progress("loading local config");
     let cfg = load_local_config()?;
 
     let Some(cfg) = cfg.filter(|c| c.enabled) else {
-        println!("Settings Sync: Off");
+        println!("Initialized: no");
         if let Some(login) = login {
             println!("Signed in as: {login}");
         } else {
             println!("Signed in as: (not signed in)");
         }
-        println!("\nTurn on with:  zync on");
+        println!("\nSet up with:  zync init");
         return Ok(());
     };
 
-    println!("Settings Sync: On");
+    println!("Initialized: yes");
     println!(
         "Account: {}",
         login.as_deref().unwrap_or("(gh unavailable)")
     );
+    println!("Store: {}", cfg.remote.repo);
     if let Some(at) = &cfg.last_synced_at {
         println!("Last synced: {at}");
     }
@@ -41,6 +49,7 @@ pub fn cmd_status() -> Result<()> {
     .collect();
     println!("Syncing: {}", syncing.join(", "));
 
+    progress("comparing with remote (may fetch)");
     match diff_config(&cfg) {
         Ok(diffs) => {
             let drifted: Vec<_> = diffs
@@ -75,19 +84,9 @@ pub fn cmd_status() -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_default() -> Result<()> {
-    let cfg = load_local_config()?;
-    if cfg.as_ref().is_none_or(|c| !c.enabled) {
-        println!("Zed Settings Sync is off.");
-        println!("Run:  zync on");
-        return Ok(());
-    }
-    cmd_status()
-}
-
-pub fn cmd_login() -> Result<()> {
-    let login = ensure_gh_auth()?;
+pub fn cmd_login(options: LoginOptions) -> Result<()> {
+    let login = interactive_login(options.yes)?;
     println!("Signed in as {login}.");
-    println!("Turn on sync:  zync on");
+    println!("Set up sync:  zync init");
     Ok(())
 }

@@ -2,13 +2,13 @@
 
 **Settings Sync for Zed** — same idea as VS Code, as a standalone Rust CLI:
 
-1. `zync on` — sign in with `gh`, create/find a private store repo  
+1. `zync init` — sign in with `gh`, create/find a private store repo  
 2. Edit settings in Zed as usual  
 3. `zync sync` when you want to push/pull  
 
-Auth uses your **GitHub CLI (`gh`)** account (the one you use for git). Zed Sign In is not enough for this yet.
+Auth uses your **GitHub CLI (`gh`)** account (the one you use for git). Zed Sign In is not enough for this yet. Reusing an existing `gh` session, creating/using the store repo, or deleting the remote all ask for confirmation (skip with `--yes`).
 
-Sync is **on demand** (no background `watch`). Comparison is by **content hash** (SHA-256), not by date. On conflict, **remote wins**; the previous local file is kept as `.bak-zync-*`.
+Sync is **on demand** (no background watcher). Comparison is by **content hash** (SHA-256), not by date. On conflict, **remote wins**; the previous local file is kept as `.bak-zync-*`. `zync sync` and `zync status` print step-by-step progress on stderr while git/network work runs.
 
 ## Install
 
@@ -26,23 +26,26 @@ cargo build --release
 ## Commands
 
 ```bash
-zync              # status if on, else hint to run `zync on`
-zync on           # turn on (sign in + first sync)
-zync on --threads # also enable agent chat history (Phase 2, not implemented yet)
-zync on --repo owner/name   # override store repo (default: <you>/zync-store)
-zync off          # turn off on this machine (cloud data kept)
-zync sync         # sync now
-zync status       # on/off + pending changes
-zync login        # sign in with gh
+zync                    # print help
+zync init               # set up only (sign in + store repo + local config; no sync)
+zync init --threads     # also enable agent chat history category (Phase 2 NYI)
+zync init --repo owner/name   # override store (default: <you>/zync-store)
+zync init --yes         # skip confirmation prompts
+zync sync               # sync now (push/pull settings)
+zync status             # initialized? + pending changes
+zync login              # sign in with gh (confirms before reusing existing session)
+zync login --yes        # skip confirmation prompts
+zync purge              # remove local setup (prints plan + confirms); cloud kept
+zync purge --remote     # local + delete GitHub store repo
+zync purge --yes        # skip confirmation
+zync purge --remote --yes
 ```
-
-Aliases: `on`/`enable`, `off`/`disable`.
 
 ### First machine
 
 ```bash
 cargo install --path .
-zync on
+zync init
 # …edit settings in Zed…
 zync sync
 ```
@@ -50,11 +53,18 @@ zync sync
 ### Second machine
 
 ```bash
-zync on    # same GitHub user → pulls existing store
-zync sync
+zync init    # same GitHub user → points at existing store
+zync sync    # downloads settings
 ```
 
 Reload Zed after a download if it was open.
+
+### Tear down
+
+```bash
+zync purge              # this machine only
+zync purge --remote     # also delete the cloud store
+```
 
 ## What syncs (defaults)
 
@@ -73,9 +83,9 @@ Store layout lives in a private GitHub repo (default `<you>/zync-store`): `manif
 | VS Code | zync |
 |---|---|
 | Account Sign In | `gh auth` / `zync login` |
-| Turn On Settings Sync | `zync on` |
+| Turn On Settings Sync | `zync init` (setup only) + `zync sync` when you want |
 | Sync Now | `zync sync` |
-| Always-on background | not yet (possible later via a Zed extension) |
+| Turn Off | `zync purge` (removes local setup; optional `--remote`) |
 | Conflict UI | `.bak-zync-*` backups + remote wins |
 
 A Zed UI toggle is a later step: a thin extension would call this binary. Extensions alone can’t do full settings sync with the current API.
@@ -88,6 +98,6 @@ A Zed UI toggle is a later step: a thin extension would call this binary. Extens
 
 ## Agent / contributor notes
 
-- `AGENTS.md` — plan-before-code, keep docs in sync, `.ai/` layout  
+- `AGENTS.md` — workflow: state first → plan → code; before commit: docs/dead-code check; `commit` = approval  
 - `.ai/state.md` — current focus / next (not a changelog)  
 - `.ai/skills/` — optional topic skills (e.g. Zed API), added when needed  

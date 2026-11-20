@@ -1,8 +1,17 @@
 # Agent notes (zync)
 
-## Plan before code
+## Workflow (order matters)
 
-Before changing code, **always show a short plan and wait for approval**. Do not edit implementation files until the user okays the plan. Doc-only updates to `AGENTS.md` / `.ai/*` / README when the user asked for them directly are fine without a separate plan.
+1. **Update `.ai/state.md` first** — set **Now** to the task about to start (and adjust **Next** if needed). Do this *before* planning or coding.
+2. **Plan → wait for approval** — show a short plan; do not edit implementation files until the user okays it. Doc-only updates the user asked for directly (`AGENTS.md` / `.ai/*` / README) are fine without a separate plan.
+3. **Implement** — code + docs/comments in the same turn (see below). Leave **Now** as the feature under test; you may note “implemented, awaiting user test/approval”.
+4. **Close out state only after user approval** — a feature is **not** done when the agent finishes coding. Until then it stays in **Now** (e.g. “awaiting your test + approval”).
+5. **Pre-commit hygiene** — before creating a commit the user asked for, quickly check and fix if needed:
+   - docs (`README.md`, `AGENTS.md`, comments) match current behavior
+   - no leftover experimental hacks / TODOs that were only for debugging
+   - no obvious dead code, unused imports, or stale commands/flags
+   - `.ai/state.md` updated for the approve/`commit` rule below
+6. **`commit` = approve** — when the user asks to **commit**, treat that as approval of the work being committed. In the same turn: run step 5, clear finished items from **Now** in `.ai/state.md` (or leave only what’s still open), *then* create the git commit (include the updated `state.md`). Explicit “approved” / “lgtm” / similar also closes **Now**. Do **not** clear **Now** just because you finished implementing or because *you* ran git without the user asking.
 
 ## Docs stay in sync
 
@@ -12,7 +21,7 @@ On **every** meaningful change, update documentation in the same turn:
 - other docs if present (including `.ai/` when relevant)
 - code comments / module docs when they describe public behavior or contracts
 
-Do not leave README, comments, or docs describing the old TypeScript/`watch` world (or any other stale behavior).
+Do not leave README, comments, or docs describing stale behavior.
 
 ## `.ai/` layout
 
@@ -23,10 +32,10 @@ Do not leave README, comments, or docs describing the old TypeScript/`watch` wor
 
 ### `.ai/state.md` — working memory
 
-- what we are working on **now**
-- what is planned **next**
+- **Now** — active work (update at the *start* of a task); stays until the user tests and approves
+- **Next** — upcoming plans only
 
-Do **not** keep a changelog of finished work there — completed work lives in **git history**. When something ships, remove it from `.ai/state.md` (or replace with the new current focus).
+Not a changelog. Items leave **Now** after user approval — including when they say **commit** (see workflow step 6) — not after implement alone.
 
 ### `.ai/skills/`
 

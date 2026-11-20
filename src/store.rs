@@ -92,35 +92,6 @@ impl Default for SyncCategories {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AutoConfig {
-    #[serde(default = "default_true")]
-    pub watch: bool,
-    #[serde(default = "default_pull_every")]
-    pub pull_every_sec: u64,
-    #[serde(default = "default_debounce")]
-    pub debounce_ms: u64,
-}
-
-fn default_pull_every() -> u64 {
-    900
-}
-
-fn default_debounce() -> u64 {
-    2000
-}
-
-impl Default for AutoConfig {
-    fn default() -> Self {
-        Self {
-            watch: true,
-            pull_every_sec: 900,
-            debounce_ms: 2000,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteConfig {
     pub repo: String,
     #[serde(default = "default_branch")]
@@ -152,8 +123,6 @@ pub struct LocalConfig {
     pub device_id: Uuid,
     #[serde(default)]
     pub categories: SyncCategories,
-    #[serde(default)]
-    pub auto: AutoConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_synced_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,7 +140,6 @@ impl LocalConfig {
             },
             device_id: Uuid::new_v4(),
             categories: SyncCategories::default(),
-            auto: AutoConfig::default(),
             last_synced_at: None,
             sync: None,
         }

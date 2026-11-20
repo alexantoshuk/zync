@@ -1,5 +1,4 @@
 use anyhow::{bail, Context, Result};
-use std::io::Write;
 use std::process::{Command, Stdio};
 
 #[derive(Debug, thiserror::Error)]
@@ -82,57 +81,51 @@ pub fn gh_create_private_repo(repo: &str, description: &str) -> Result<()> {
     Ok(())
 }
 
-/// Ensure `gh` is logged in; if not, run interactive `gh auth login`.
-pub fn ensure_gh_auth() -> Result<String> {
+pub fn gh_delete_repo(repo: &str) -> Result<()> {
+    run_gh(&["repo", "delete", repo, "--yes"])?;
+    Ok(())
+}
+
+fn run_gh_auth_login() -> Result<String> {
+    println!("Sign in to GitHub (same account you use for git).\n");
+    let status = Command::new("gh")
+        .args(["auth", "login"])
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("spawn gh auth login")?;
+    if !status.success() {
+        bail!("GitHub sign-in was cancelled or failed.");
+    }
+    gh_login()
+}
+
+/// Ensure `gh` is logged in.
+/// If a session already exists, ask to reuse it (unless `yes`).
+pub fn ensure_gh_auth(yes: bool) -> Result<String> {
     match gh_login() {
-        Ok(login) => Ok(login),
-        Err(_) => {
-            println!("Sign in to GitHub to turn on sync (same account you use for git).\n");
-            let status = Command::new("gh")
-                .args(["auth", "login"])
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
-                .context("spawn gh auth login")?;
-            if !status.success() {
-                bail!("GitHub sign-in was cancelled or failed.");
+        Ok(login) => {
+            let prompt = format!("GitHub CLI is signed in as `{login}`. Continue with this account?");
+            if !crate::util::confirm_or_yes(&prompt, yes)? {
+                bail!("Aborted.");
             }
-            gh_login()
+            Ok(login)
         }
+        Err(_) => run_gh_auth_login(),
     }
 }
 
-#[allow(dead_code)]
-pub fn gh_api_with_body(endpoint: &str, method: Option<&str>, body: &str) -> Result<String> {
-    let mut args = vec!["api", endpoint];
-    if let Some(m) = method {
-        args.push("--method");
-        args.push(m);
+/// Interactive login command: reuse existing session or run `gh auth login`.
+pub fn interactive_login(yes: bool) -> Result<String> {
+    match gh_login() {
+        Ok(login) => {
+            let prompt = format!("Already signed in as `{login}`. Use this account?");
+            if crate::util::confirm_or_yes(&prompt, yes)? {
+                return Ok(login);
+            }
+            run_gh_auth_login()
+        }
+        Err(_) => run_gh_auth_login(),
     }
-    args.push("--input");
-    args.push("-");
-
-    let mut child = Command::new("gh")
-        .args(&args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("spawn gh api")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(body.as_bytes())?;
-    }
-
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        bail!(GhError::Message(format!(
-            "gh {} failed: {}",
-            args.join(" "),
-            err.trim()
-        )));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

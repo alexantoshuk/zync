@@ -13,14 +13,14 @@ pub fn load_local_config() -> Result<Option<LocalConfig>> {
 
 pub fn require_local_config() -> Result<LocalConfig> {
     load_local_config()?.ok_or_else(|| {
-        anyhow::anyhow!("Settings Sync is off. Run `zync on` to turn it on.")
+        anyhow::anyhow!("Not initialized. Run `zync init` first.")
     })
 }
 
 pub fn require_enabled_config() -> Result<LocalConfig> {
     let cfg = require_local_config()?;
     if !cfg.enabled {
-        bail!("Settings Sync is off. Run `zync on` to turn it on.");
+        bail!("Local config is disabled. Run `zync init` or `zync purge` then `zync init`.");
     }
     Ok(cfg)
 }

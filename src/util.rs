@@ -1,7 +1,34 @@
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
+
+/// Prompt `[y/N]`. Returns true only for y/yes.
+pub fn confirm(prompt: &str) -> Result<bool> {
+    eprint!("{prompt} [y/N] ");
+    io::stderr().flush()?;
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    Ok(matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+/// Like [`confirm`], but skips the prompt when `yes` is true.
+pub fn confirm_or_yes(prompt: &str, yes: bool) -> Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    confirm(prompt)
+}
+
+/// Progress line for long operations (stderr so it stays visible with piped stdout).
+pub fn progress(msg: &str) {
+    eprintln!("… {msg}");
+    let _ = io::stderr().flush();
+}
 
 pub fn sha256_text(text: &str) -> String {
     let mut hasher = Sha256::new();

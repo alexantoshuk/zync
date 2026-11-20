@@ -9,7 +9,9 @@ use crate::store::{
     ManifestUpdatedBy, STORE_VERSION,
 };
 use crate::sync::extensions::merge_extensions_into_settings;
-use crate::util::{normalize_json_or_text, path_exists, read_text_if_exists, sha256_text, write_text};
+use crate::util::{
+    normalize_json_or_text, path_exists, progress, read_text_if_exists, sha256_text, write_text,
+};
 use anyhow::Result;
 use chrono::Utc;
 use std::path::PathBuf;
@@ -180,9 +182,11 @@ pub fn remote_has_synced_data(cfg: &LocalConfig) -> Result<bool> {
 
 pub fn push_config(cfg: &LocalConfig) -> Result<Vec<String>> {
     if cfg.categories.extensions {
+        progress("merging installed extensions into settings");
         let _ = merge_extensions_into_settings()?;
     }
 
+    progress("preparing store working copy");
     let dir = ensure_dir(cfg)?;
     let mut pushed = Vec::new();
     let mut hashes = ManifestHashes::default();
@@ -194,6 +198,7 @@ pub fn push_config(cfg: &LocalConfig) -> Result<Vec<String>> {
         let Some(text) = read_text_if_exists(&(file.local)())? else {
             continue;
         };
+        progress(&format!("staging {}", file.key.as_str()));
         let normalized = normalize_json_or_text(&text);
         write_store_file(&dir, file.remote, &normalized)?;
         set_hash(&mut hashes, file.key, sha256_text(&normalized));
@@ -246,6 +251,7 @@ pub fn pull_config(cfg: &LocalConfig) -> Result<Vec<String>> {
             continue;
         };
 
+        progress(&format!("applying {}", file.key.as_str()));
         let dest = (file.local)();
         if path_exists(&dest) {
             let stamp = Utc::now()
@@ -263,6 +269,7 @@ pub fn pull_config(cfg: &LocalConfig) -> Result<Vec<String>> {
 }
 
 pub fn diff_config(cfg: &LocalConfig) -> Result<Vec<ConfigDiff>> {
+    progress("reading remote manifest");
     let remote_hashes = match ensure_store_clone(cfg) {
         Ok(dir) => match read_store_file(&dir, store_paths::MANIFEST)? {
             Some(raw) => {
@@ -274,6 +281,7 @@ pub fn diff_config(cfg: &LocalConfig) -> Result<Vec<ConfigDiff>> {
         Err(_) => ManifestHashes::default(),
     };
 
+    progress("hashing local config files");
     let local_hashes = collect_local_config_hashes(Some(cfg))?;
 
     Ok(ConfigKey::all()

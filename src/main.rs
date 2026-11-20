@@ -8,15 +8,17 @@ mod sync;
 mod util;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-use commands::{cmd_default, cmd_login, cmd_status, cmd_sync, cmd_turn_off, cmd_turn_on};
-use commands::turn_on::TurnOnOptions;
+use clap::{CommandFactory, Parser, Subcommand};
+use commands::init::InitOptions;
+use commands::purge::PurgeOptions;
+use commands::status::LoginOptions;
+use commands::{cmd_init, cmd_login, cmd_purge, cmd_status, cmd_sync};
 
 #[derive(Parser)]
 #[command(
     name = "zync",
     version,
-    about = "Settings Sync for Zed — same idea as VS Code Settings Sync"
+    about = "Settings Sync for Zed — sync on demand via GitHub"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -25,25 +27,37 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Turn on Settings Sync (sign in + first sync)
-    #[command(alias = "enable")]
-    On {
-        /// Also sync agent chat history
+    /// Initialize sync (sign in + store repo + local config; does not sync)
+    Init {
+        /// Also enable agent chat history category (export not implemented yet)
         #[arg(long)]
         threads: bool,
         /// Override store repo (default: <you>/zync-store)
         #[arg(long)]
         repo: Option<String>,
+        /// Skip confirmation prompts
+        #[arg(long)]
+        yes: bool,
     },
-    /// Turn off Settings Sync on this machine
-    #[command(alias = "disable")]
-    Off,
+    /// Remove local zync setup (config + store cache; confirms first)
+    Purge {
+        /// Also delete the GitHub store repository
+        #[arg(long)]
+        remote: bool,
+        /// Skip confirmation prompts
+        #[arg(long)]
+        yes: bool,
+    },
     /// Sync now
     Sync,
-    /// Show whether sync is on and if anything is pending
+    /// Show whether sync is initialized and if anything is pending
     Status,
     /// Sign in with GitHub CLI
-    Login,
+    Login {
+        /// Skip confirmation prompts
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 fn main() {
@@ -56,11 +70,23 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        None => cmd_default(),
-        Some(Commands::On { threads, repo }) => cmd_turn_on(TurnOnOptions { threads, repo }),
-        Some(Commands::Off) => cmd_turn_off(),
+        None => {
+            Cli::command().print_help()?;
+            println!();
+            Ok(())
+        }
+        Some(Commands::Init {
+            threads,
+            repo,
+            yes,
+        }) => cmd_init(InitOptions {
+            threads,
+            repo,
+            yes,
+        }),
+        Some(Commands::Purge { remote, yes }) => cmd_purge(PurgeOptions { remote, yes }),
         Some(Commands::Sync) => cmd_sync(),
         Some(Commands::Status) => cmd_status(),
-        Some(Commands::Login) => cmd_login(),
+        Some(Commands::Login { yes }) => cmd_login(LoginOptions { yes }),
     }
 }
