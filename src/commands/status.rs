@@ -1,5 +1,6 @@
 use crate::auth::{gh_login, interactive_login};
 use crate::config::load_local_config;
+use crate::git_store::prepare_store_dir;
 use crate::sync::config::{diff_config, DiffStatus};
 use crate::sync::threads::{threads_db_available, threads_db_location};
 use crate::util::progress;
@@ -9,7 +10,7 @@ pub struct LoginOptions {
     pub yes: bool,
 }
 
-pub fn cmd_status() -> Result<()> {
+pub fn cmd_status(force_refresh: bool) -> Result<()> {
     progress("checking GitHub CLI login");
     let login = gh_login().ok();
     progress("loading local config");
@@ -49,8 +50,11 @@ pub fn cmd_status() -> Result<()> {
     .collect();
     println!("Syncing: {}", syncing.join(", "));
 
-    progress("comparing with remote (may fetch)");
-    match diff_config(&cfg) {
+    match (|| -> anyhow::Result<_> {
+        let dir = prepare_store_dir(&cfg, force_refresh)?;
+        progress("comparing with remote");
+        Ok(diff_config(&cfg, &dir)?)
+    })() {
         Ok(diffs) => {
             let drifted: Vec<_> = diffs
                 .iter()

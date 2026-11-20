@@ -4,6 +4,10 @@ use crate::util::{path_exists, progress, read_text_if_exists, write_text};
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Skip network fetch if the store was refreshed this recently (shared by sync + status).
+pub const STORE_REFRESH_TTL_SECS: u64 = 120;
 
 fn run_git(cwd: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
@@ -34,26 +38,78 @@ pub fn store_clone_path(cfg: &LocalConfig) -> PathBuf {
     zync_cache_dir().join("stores").join(safe)
 }
 
-pub fn ensure_store_clone(cfg: &LocalConfig) -> Result<PathBuf> {
+fn refresh_stamp_path(dir: &Path) -> PathBuf {
+    // Inside .git so `git add -A` never commits it.
+    dir.join(".git").join("zync-last-refresh")
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn read_last_refresh_secs(dir: &Path) -> Option<u64> {
+    let raw = read_text_if_exists(&refresh_stamp_path(dir)).ok()??;
+    raw.trim().parse().ok()
+}
+
+fn write_last_refresh(dir: &Path) -> Result<()> {
+    let stamp = refresh_stamp_path(dir);
+    write_text(&stamp, &format!("{}\n", now_unix_secs()))
+}
+
+fn secs_since_refresh(dir: &Path) -> Option<u64> {
+    let last = read_last_refresh_secs(dir)?;
+    let now = now_unix_secs();
+    Some(now.saturating_sub(last))
+}
+
+fn ensure_branch_checked_out(dir: &Path, branch: &str) -> Result<()> {
+    let upstream = format!("origin/{branch}");
+    progress(&format!("git checkout {branch}"));
+    run_git(dir, &["checkout", branch])?;
+    // Local only — aligns HEAD with last fetched origin tip without network.
+    progress(&format!("git reset --hard {upstream}"));
+    let _ = run_git(dir, &["reset", "--hard", &upstream]);
+    Ok(())
+}
+
+fn fetch_and_reset(dir: &Path, cfg: &LocalConfig) -> Result<()> {
+    progress(&format!(
+        "git fetch origin/{} ({})",
+        cfg.remote.branch, cfg.remote.repo
+    ));
+    run_git(dir, &["fetch", "origin", &cfg.remote.branch])?;
+    ensure_branch_checked_out(dir, &cfg.remote.branch)?;
+    write_last_refresh(dir)?;
+    Ok(())
+}
+
+/// Clone or refresh the store. Skips fetch when a recent refresh stamp exists (unless `force`).
+pub fn refresh_store_clone(cfg: &LocalConfig, force: bool) -> Result<PathBuf> {
     let dir = store_clone_path(cfg);
     let git_dir = dir.join(".git");
 
     if path_exists(&git_dir) {
-        progress(&format!(
-            "git fetch origin/{} ({})",
-            cfg.remote.branch, cfg.remote.repo
-        ));
-        run_git(&dir, &["fetch", "origin", &cfg.remote.branch])?;
-        progress(&format!("git checkout {}", cfg.remote.branch));
-        run_git(&dir, &["checkout", &cfg.remote.branch])?;
-        progress(&format!(
-            "git pull --ff-only origin/{}",
-            cfg.remote.branch
-        ));
-        run_git(
-            &dir,
-            &["pull", "--ff-only", "origin", &cfg.remote.branch],
-        )?;
+        if !force {
+            if let Some(age) = secs_since_refresh(&dir) {
+                if age < STORE_REFRESH_TTL_SECS {
+                    progress(&format!(
+                        "store fresh (refreshed {age}s ago, ttl {}s); skipping fetch",
+                        STORE_REFRESH_TTL_SECS
+                    ));
+                    // Still point HEAD at last known origin tip (local).
+                    let upstream = format!("origin/{}", cfg.remote.branch);
+                    let _ = run_git(&dir, &["checkout", &cfg.remote.branch]);
+                    let _ = run_git(&dir, &["reset", "--hard", &upstream]);
+                    return Ok(dir);
+                }
+            }
+        }
+
+        fetch_and_reset(&dir, cfg)?;
         return Ok(dir);
     }
 
@@ -61,7 +117,7 @@ pub fn ensure_store_clone(cfg: &LocalConfig) -> Result<PathBuf> {
         std::fs::create_dir_all(parent)?;
     }
     let url = format!("https://github.com/{}.git", cfg.remote.repo);
-    progress(&format!("git clone {url}"));
+    progress(&format!("cloning store {url}"));
     let output = Command::new("git")
         .args([
             "clone",
@@ -77,7 +133,24 @@ pub fn ensure_store_clone(cfg: &LocalConfig) -> Result<PathBuf> {
         let err = String::from_utf8_lossy(&output.stderr);
         bail!("git clone failed: {}", err.trim());
     }
+    write_last_refresh(&dir)?;
     Ok(dir)
+}
+
+/// Refresh if possible; otherwise create an empty local git repo pointed at origin.
+pub fn prepare_store_dir(cfg: &LocalConfig, force: bool) -> Result<PathBuf> {
+    match refresh_store_clone(cfg, force) {
+        Ok(dir) => Ok(dir),
+        Err(err) => {
+            progress(&format!(
+                "remote clone unavailable ({err:#}); initializing empty local store"
+            ));
+            init_empty_store_repo(
+                cfg,
+                "# zync store\n\nPrivate Settings Sync store for Zed.\n",
+            )
+        }
+    }
 }
 
 pub fn init_empty_store_repo(cfg: &LocalConfig, readme: &str) -> Result<PathBuf> {
@@ -107,6 +180,8 @@ pub fn commit_and_push(dir: &Path, message: &str, branch: &str) -> Result<()> {
     run_git(dir, &["commit", "-m", message])?;
     progress(&format!("git push origin/{branch}"));
     run_git(dir, &["push", "-u", "origin", branch])?;
+    // Local tip matches what we just pushed — treat as refreshed.
+    write_last_refresh(dir)?;
     Ok(())
 }
 

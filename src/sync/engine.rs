@@ -1,4 +1,5 @@
 use crate::config::{require_enabled_config, save_local_config};
+use crate::git_store::prepare_store_dir;
 use crate::sync::config::{diff_config, pull_config, push_config, remote_has_synced_data, DiffStatus};
 use crate::sync::threads::{export_threads, threads_db_available};
 use crate::util::progress;
@@ -21,18 +22,20 @@ pub struct SyncResult {
 }
 
 /// One-shot sync like VS Code "Settings Sync: Sync Now".
-pub fn sync_now() -> Result<SyncResult> {
+pub fn sync_now(force_refresh: bool) -> Result<SyncResult> {
     progress("loading local config");
     let mut cfg = require_enabled_config()?;
     let mut uploaded = Vec::new();
     let mut downloaded = Vec::new();
 
     if cfg.wants_config_sync() {
+        let dir = prepare_store_dir(&cfg, force_refresh)?;
+
         progress("checking remote store");
-        let has_remote = remote_has_synced_data(&cfg)?;
+        let has_remote = remote_has_synced_data(&dir)?;
         let diffs = if has_remote {
             progress("comparing local vs remote");
-            diff_config(&cfg)?
+            diff_config(&cfg, &dir)?
         } else {
             progress("remote store empty or missing synced data");
             Vec::new()
@@ -52,7 +55,7 @@ pub fn sync_now() -> Result<SyncResult> {
 
         if !has_remote {
             progress("uploading local config (first push)");
-            uploaded.extend(push_config(&cfg)?);
+            uploaded.extend(push_config(&cfg, &dir)?);
         } else if all_same && !any_different {
             progress("already in sync");
         } else {
@@ -66,11 +69,11 @@ pub fn sync_now() -> Result<SyncResult> {
 
             if remote_only_or_different {
                 progress("pulling remote config");
-                downloaded.extend(pull_config(&cfg)?);
+                downloaded.extend(pull_config(&cfg, &dir)?);
             }
             if local_only || remote_only_or_different {
                 progress("pushing local config");
-                uploaded.extend(push_config(&cfg)?);
+                uploaded.extend(push_config(&cfg, &dir)?);
             }
         }
     }

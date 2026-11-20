@@ -1,8 +1,8 @@
 use crate::sync::engine::{sync_now, SyncAction};
 use anyhow::Result;
 
-pub fn cmd_sync() -> Result<()> {
-    let result = sync_now()?;
+pub fn cmd_sync(force_refresh: bool) -> Result<()> {
+    let result = sync_now(force_refresh)?;
     match result.action {
         SyncAction::InSync => println!("In sync."),
         SyncAction::Uploaded => {

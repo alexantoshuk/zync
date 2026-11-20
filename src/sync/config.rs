@@ -1,6 +1,4 @@
-use crate::git_store::{
-    commit_and_push, ensure_store_clone, init_empty_store_repo, read_store_file, write_store_file,
-};
+use crate::git_store::{commit_and_push, read_store_file, write_store_file};
 use crate::paths::{
     detect_platform, zed_debug_path, zed_keymap_path, zed_settings_path, zed_tasks_path,
 };
@@ -14,7 +12,7 @@ use crate::util::{
 };
 use anyhow::Result;
 use chrono::Utc;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigKey {
@@ -153,41 +151,30 @@ pub fn collect_local_config_hashes(cfg: Option<&LocalConfig>) -> Result<Manifest
     Ok(hashes)
 }
 
-fn ensure_dir(cfg: &LocalConfig) -> Result<std::path::PathBuf> {
-    match ensure_store_clone(cfg) {
-        Ok(dir) => Ok(dir),
-        Err(_) => init_empty_store_repo(
-            cfg,
-            "# zync store\n\nPrivate Settings Sync store for Zed.\n",
-        ),
-    }
+fn read_remote_hashes(dir: &Path) -> Result<ManifestHashes> {
+    let Some(raw) = read_store_file(dir, store_paths::MANIFEST)? else {
+        return Ok(ManifestHashes::default());
+    };
+    let manifest: Manifest = serde_json::from_str(&raw)?;
+    Ok(manifest.hashes)
 }
 
-pub fn remote_has_synced_data(cfg: &LocalConfig) -> Result<bool> {
-    match ensure_store_clone(cfg) {
-        Ok(dir) => {
-            let Some(raw) = read_store_file(&dir, store_paths::MANIFEST)? else {
-                return Ok(false);
-            };
-            let manifest: Manifest = serde_json::from_str(&raw)?;
-            Ok(get_hash(&manifest.hashes, ConfigKey::Settings).is_some()
-                || get_hash(&manifest.hashes, ConfigKey::Keymap).is_some()
-                || get_hash(&manifest.hashes, ConfigKey::Tasks).is_some()
-                || get_hash(&manifest.hashes, ConfigKey::Debug).is_some()
-                || manifest.hashes.threads_index.is_some())
-        }
-        Err(_) => Ok(false),
-    }
+pub fn remote_has_synced_data(dir: &Path) -> Result<bool> {
+    let hashes = read_remote_hashes(dir)?;
+    Ok(get_hash(&hashes, ConfigKey::Settings).is_some()
+        || get_hash(&hashes, ConfigKey::Keymap).is_some()
+        || get_hash(&hashes, ConfigKey::Tasks).is_some()
+        || get_hash(&hashes, ConfigKey::Debug).is_some()
+        || hashes.threads_index.is_some())
 }
 
-pub fn push_config(cfg: &LocalConfig) -> Result<Vec<String>> {
+/// Push using an already-prepared store directory (no extra fetch).
+pub fn push_config(cfg: &LocalConfig, dir: &Path) -> Result<Vec<String>> {
     if cfg.categories.extensions {
         progress("merging installed extensions into settings");
         let _ = merge_extensions_into_settings()?;
     }
 
-    progress("preparing store working copy");
-    let dir = ensure_dir(cfg)?;
     let mut pushed = Vec::new();
     let mut hashes = ManifestHashes::default();
 
@@ -200,7 +187,7 @@ pub fn push_config(cfg: &LocalConfig) -> Result<Vec<String>> {
         };
         progress(&format!("staging {}", file.key.as_str()));
         let normalized = normalize_json_or_text(&text);
-        write_store_file(&dir, file.remote, &normalized)?;
+        write_store_file(dir, file.remote, &normalized)?;
         set_hash(&mut hashes, file.key, sha256_text(&normalized));
         pushed.push(file.key.as_str().to_string());
     }
@@ -226,7 +213,7 @@ pub fn push_config(cfg: &LocalConfig) -> Result<Vec<String>> {
 
     let mut manifest_json = serde_json::to_string_pretty(&manifest)?;
     manifest_json.push('\n');
-    write_store_file(&dir, store_paths::MANIFEST, &manifest_json)?;
+    write_store_file(dir, store_paths::MANIFEST, &manifest_json)?;
 
     let msg = format!(
         "zync: sync from {}",
@@ -234,20 +221,20 @@ pub fn push_config(cfg: &LocalConfig) -> Result<Vec<String>> {
             .map(|h| h.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "unknown".into())
     );
-    commit_and_push(&dir, &msg, &cfg.remote.branch)?;
+    commit_and_push(dir, &msg, &cfg.remote.branch)?;
 
     Ok(pushed)
 }
 
-pub fn pull_config(cfg: &LocalConfig) -> Result<Vec<String>> {
-    let dir = ensure_store_clone(cfg)?;
+/// Pull using an already-refreshed store directory (no extra fetch).
+pub fn pull_config(cfg: &LocalConfig, dir: &Path) -> Result<Vec<String>> {
     let mut pulled = Vec::new();
 
     for file in &CONFIG_FILES {
         if !category_enabled(cfg, file.category) {
             continue;
         }
-        let Some(remote) = read_store_file(&dir, file.remote)? else {
+        let Some(remote) = read_store_file(dir, file.remote)? else {
             continue;
         };
 
@@ -268,18 +255,10 @@ pub fn pull_config(cfg: &LocalConfig) -> Result<Vec<String>> {
     Ok(pulled)
 }
 
-pub fn diff_config(cfg: &LocalConfig) -> Result<Vec<ConfigDiff>> {
+/// Diff against an already-refreshed store directory (no extra fetch).
+pub fn diff_config(cfg: &LocalConfig, dir: &Path) -> Result<Vec<ConfigDiff>> {
     progress("reading remote manifest");
-    let remote_hashes = match ensure_store_clone(cfg) {
-        Ok(dir) => match read_store_file(&dir, store_paths::MANIFEST)? {
-            Some(raw) => {
-                let manifest: Manifest = serde_json::from_str(&raw)?;
-                manifest.hashes
-            }
-            None => ManifestHashes::default(),
-        },
-        Err(_) => ManifestHashes::default(),
-    };
+    let remote_hashes = read_remote_hashes(dir)?;
 
     progress("hashing local config files");
     let local_hashes = collect_local_config_hashes(Some(cfg))?;

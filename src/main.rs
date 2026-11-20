@@ -49,9 +49,17 @@ enum Commands {
         yes: bool,
     },
     /// Sync now
-    Sync,
+    Sync {
+        /// Force git fetch even if store was refreshed recently
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Show whether sync is initialized and if anything is pending
-    Status,
+    Status {
+        /// Force git fetch even if store was refreshed recently
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Sign in with GitHub CLI
     Login {
         /// Skip confirmation prompts
@@ -85,8 +93,8 @@ fn run() -> Result<()> {
             yes,
         }),
         Some(Commands::Purge { remote, yes }) => cmd_purge(PurgeOptions { remote, yes }),
-        Some(Commands::Sync) => cmd_sync(),
-        Some(Commands::Status) => cmd_status(),
+        Some(Commands::Sync { refresh }) => cmd_sync(refresh),
+        Some(Commands::Status { refresh }) => cmd_status(refresh),
         Some(Commands::Login { yes }) => cmd_login(LoginOptions { yes }),
     }
 }

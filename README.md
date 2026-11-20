@@ -8,7 +8,7 @@
 
 Auth uses your **GitHub CLI (`gh`)** account (the one you use for git). Zed Sign In is not enough for this yet. Reusing an existing `gh` session, creating/using the store repo, or deleting the remote all ask for confirmation (skip with `--yes`).
 
-Sync is **on demand** (no background watcher). Comparison is by **content hash** (SHA-256), not by date. On conflict, **remote wins**; the previous local file is kept as `.bak-zync-*`. `zync sync` and `zync status` print step-by-step progress on stderr while git/network work runs.
+Sync is **on demand** (no background watcher). Comparison is by **content hash** (SHA-256), not by date. On conflict, **remote wins**; the previous local file is kept as `.bak-zync-*`. Store refresh (`git fetch` + hard reset) is shared: within **120s** after a fetch/push, `sync`/`status` skip another fetch (use `--refresh` to force). Progress on stderr.
 
 ## Install
 
@@ -32,7 +32,9 @@ zync init --threads     # also enable agent chat history category (Phase 2 NYI)
 zync init --repo owner/name   # override store (default: <you>/zync-store)
 zync init --yes         # skip confirmation prompts
 zync sync               # sync now (push/pull settings)
+zync sync --refresh     # force git fetch even if store was refreshed recently
 zync status             # initialized? + pending changes
+zync status --refresh   # force git fetch
 zync login              # sign in with gh (confirms before reusing existing session)
 zync login --yes        # skip confirmation prompts
 zync purge              # remove local setup (prints plan + confirms); cloud kept
@@ -99,5 +101,6 @@ A Zed UI toggle is a later step: a thin extension would call this binary. Extens
 ## Agent / contributor notes
 
 - `AGENTS.md` — workflow: state first → plan → code; before commit: docs/dead-code check; `commit` = approval  
+- `.ai/product.md` — product model and behavior  
 - `.ai/state.md` — current focus / next (not a changelog)  
 - `.ai/skills/` — optional topic skills (e.g. Zed API), added when needed  
