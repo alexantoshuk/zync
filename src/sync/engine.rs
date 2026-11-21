@@ -1,6 +1,9 @@
 use crate::config::{require_enabled_config, save_local_config};
 use crate::git_store::prepare_store_dir;
-use crate::sync::config::{diff_config, pull_config, push_config, remote_has_synced_data, DiffStatus};
+use crate::sync::config::{
+    collect_local_config_hashes, diff_config, pull_config, push_config, remote_has_synced_data,
+    ConfigKey, DiffStatus,
+};
 use crate::sync::threads::{export_threads, threads_db_available};
 use crate::util::progress;
 use anyhow::Result;
@@ -51,44 +54,39 @@ pub fn sync_now(options: SyncOptions) -> Result<SyncResult> {
                 Vec::new()
             };
 
-            let any_different = diffs.iter().any(|d| {
-                matches!(
-                    d.status,
-                    DiffStatus::LocalNewerOrDifferent
-                        | DiffStatus::LocalOnly
-                        | DiffStatus::RemoteOnly
-                )
-            });
-            let all_same = has_remote
-                && !diffs.is_empty()
-                && diffs
-                    .iter()
-                    .all(|d| matches!(d.status, DiffStatus::Same | DiffStatus::Missing));
-
             if !has_remote {
                 progress("uploading local config (first push)");
                 uploaded.extend(push_config(&cfg, &dir)?);
-            } else if all_same && !any_different {
-                progress("already in sync");
             } else {
-                let remote_only_or_different = diffs.iter().any(|d| {
-                    matches!(
-                        d.status,
-                        DiffStatus::RemoteOnly | DiffStatus::LocalNewerOrDifferent
-                    )
-                });
-                let local_only = diffs.iter().any(|d| d.status == DiffStatus::LocalOnly);
+                let pull_keys: Vec<ConfigKey> = diffs
+                    .iter()
+                    .filter(|d| d.status.needs_pull())
+                    .map(|d| d.key)
+                    .collect();
+                let need_push = diffs.iter().any(|d| d.status.needs_push());
+                let any_conflict = diffs.iter().any(|d| d.status == DiffStatus::Conflict);
 
-                if remote_only_or_different {
-                    progress("pulling remote config");
-                    downloaded.extend(pull_config(&cfg, &dir)?);
-                }
-                if local_only || remote_only_or_different {
-                    progress("pushing local config");
-                    uploaded.extend(push_config(&cfg, &dir)?);
+                if pull_keys.is_empty() && !need_push {
+                    progress("already in sync");
+                } else {
+                    if !pull_keys.is_empty() {
+                        if any_conflict {
+                            progress("pulling remote config (conflict: remote wins)");
+                        } else {
+                            progress("pulling remote config");
+                        }
+                        downloaded.extend(pull_config(&cfg, &dir, &pull_keys)?);
+                    }
+                    if need_push {
+                        progress("pushing local config");
+                        uploaded.extend(push_config(&cfg, &dir)?);
+                    }
                 }
             }
         }
+
+        progress("recording sync baseline");
+        cfg.last_synced_hashes = Some(collect_local_config_hashes(Some(&cfg))?);
     }
 
     if cfg.wants_threads_sync() && threads_db_available() {

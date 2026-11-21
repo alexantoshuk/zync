@@ -8,7 +8,7 @@
 
 Auth uses your **GitHub CLI (`gh`)** account (the one you use for git). Zed Sign In is not enough for this yet. Reusing an existing `gh` session, creating/using the store repo, or deleting the remote all ask for confirmation (skip with `--yes`).
 
-Sync is **on demand** (no background watcher). Comparison is by **content hash** (SHA-256), not by date. On conflict, **remote wins** by default (local backup `.bak-zync-*`); overwrite cloud with `zync sync --force-push`. Store refresh (`git fetch` + hard reset) is shared: within **120s** after a fetch/push, `sync`/`status` skip another fetch (use `--refresh` to force). Progress on stderr.
+Sync is **on demand** (no background watcher). Comparison is by **content hash** (SHA-256), not by date. After each sync this machine remembers the agreed hashes: edit locally and sync again → **push**; another machine changed the cloud → **pull**. Only if **both** sides changed since your last sync is it a conflict (**remote wins**, local backup `.bak-zync-*`). Overwrite cloud anytime with `zync sync --force-push`. Store refresh (`git fetch` + hard reset) is shared: within **120s** after a fetch/push, `sync`/`status` skip another fetch (use `--refresh` to force). Progress on stderr.
 
 ## Install
 
@@ -90,7 +90,7 @@ Store layout lives in a private GitHub repo (default `<you>/zync-store`): `manif
 | Turn On Settings Sync | `zync init` (setup only) + `zync sync` when you want |
 | Sync Now | `zync sync` |
 | Turn Off | `zync purge` (removes local setup; optional `--remote`) |
-| Conflict UI | `.bak-zync-*` backups + remote wins |
+| Conflict UI | both sides changed → `.bak-zync-*` + remote wins; local-only edits push |
 
 A Zed UI toggle is a later step: a thin extension would call this binary. Extensions alone can’t do full settings sync with the current API.
 

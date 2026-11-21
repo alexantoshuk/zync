@@ -13,6 +13,7 @@ use crate::util::{
 use anyhow::Result;
 use chrono::Utc;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigKey {
@@ -88,6 +89,7 @@ fn category_enabled(cfg: &LocalConfig, category: Category) -> bool {
 
 #[derive(Debug, Clone)]
 pub struct ConfigDiff {
+    pub key: ConfigKey,
     pub file: String,
     #[allow(dead_code)]
     pub local_hash: Option<String>,
@@ -96,10 +98,16 @@ pub struct ConfigDiff {
     pub status: DiffStatus,
 }
 
+/// Per-file sync intent (hash compare + baseline / last writer).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffStatus {
     Same,
-    LocalNewerOrDifferent,
+    /// Local diverged; remote still at baseline (or last remote writer is this device).
+    LocalChanged,
+    /// Remote diverged; local still at baseline.
+    RemoteChanged,
+    /// Both sides diverged from baseline — remote wins on sync.
+    Conflict,
     RemoteOnly,
     LocalOnly,
     Missing,
@@ -109,11 +117,48 @@ impl DiffStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Same => "same",
-            Self::LocalNewerOrDifferent => "local-newer-or-different",
+            Self::LocalChanged => "local-changed",
+            Self::RemoteChanged => "remote-changed",
+            Self::Conflict => "conflict (remote wins)",
             Self::RemoteOnly => "remote-only",
             Self::LocalOnly => "local-only",
             Self::Missing => "missing",
         }
+    }
+
+    pub fn needs_pull(self) -> bool {
+        matches!(
+            self,
+            Self::RemoteChanged | Self::Conflict | Self::RemoteOnly
+        )
+    }
+
+    pub fn needs_push(self) -> bool {
+        matches!(self, Self::LocalChanged | Self::LocalOnly)
+    }
+}
+
+/// Classify one file given local/remote/baseline hashes and whether remote was last written by us.
+pub fn classify_file(
+    local: Option<&str>,
+    remote: Option<&str>,
+    baseline: Option<&str>,
+    remote_written_by_us: bool,
+) -> DiffStatus {
+    match (local, remote) {
+        (None, None) => DiffStatus::Missing,
+        (Some(l), Some(r)) if l == r => DiffStatus::Same,
+        (Some(_), None) => DiffStatus::LocalOnly,
+        (None, Some(_)) => DiffStatus::RemoteOnly,
+        (Some(l), Some(r)) => match baseline {
+            Some(b) if b == r => DiffStatus::LocalChanged,
+            Some(b) if b == l => DiffStatus::RemoteChanged,
+            Some(_) => DiffStatus::Conflict,
+            // No baseline yet (upgrade / first sync after init): if we wrote remote last,
+            // treat divergence as our local edits; otherwise assume remote should win.
+            None if remote_written_by_us => DiffStatus::LocalChanged,
+            None => DiffStatus::Conflict,
+        },
     }
 }
 
@@ -151,12 +196,24 @@ pub fn collect_local_config_hashes(cfg: Option<&LocalConfig>) -> Result<Manifest
     Ok(hashes)
 }
 
-fn read_remote_hashes(dir: &Path) -> Result<ManifestHashes> {
+fn read_manifest(dir: &Path) -> Result<Option<Manifest>> {
     let Some(raw) = read_store_file(dir, store_paths::MANIFEST)? else {
-        return Ok(ManifestHashes::default());
+        return Ok(None);
     };
-    let manifest: Manifest = serde_json::from_str(&raw)?;
-    Ok(manifest.hashes)
+    Ok(Some(serde_json::from_str(&raw)?))
+}
+
+fn read_remote_hashes(dir: &Path) -> Result<ManifestHashes> {
+    Ok(read_manifest(dir)?
+        .map(|m| m.hashes)
+        .unwrap_or_default())
+}
+
+fn remote_written_by_device(dir: &Path, device_id: &Uuid) -> Result<bool> {
+    let Some(manifest) = read_manifest(dir)? else {
+        return Ok(false);
+    };
+    Ok(manifest.updated_by.device_id == device_id.to_string())
 }
 
 pub fn remote_has_synced_data(dir: &Path) -> Result<bool> {
@@ -226,12 +283,16 @@ pub fn push_config(cfg: &LocalConfig, dir: &Path) -> Result<Vec<String>> {
     Ok(pushed)
 }
 
-/// Pull using an already-refreshed store directory (no extra fetch).
-pub fn pull_config(cfg: &LocalConfig, dir: &Path) -> Result<Vec<String>> {
+/// Pull selected keys (or all config files when `keys` is empty) into local Zed paths.
+pub fn pull_config(cfg: &LocalConfig, dir: &Path, keys: &[ConfigKey]) -> Result<Vec<String>> {
     let mut pulled = Vec::new();
+    let pull_all = keys.is_empty();
 
     for file in &CONFIG_FILES {
         if !category_enabled(cfg, file.category) {
+            continue;
+        }
+        if !pull_all && !keys.contains(&file.key) {
             continue;
         }
         let Some(remote) = read_store_file(dir, file.remote)? else {
@@ -259,6 +320,8 @@ pub fn pull_config(cfg: &LocalConfig, dir: &Path) -> Result<Vec<String>> {
 pub fn diff_config(cfg: &LocalConfig, dir: &Path) -> Result<Vec<ConfigDiff>> {
     progress("reading remote manifest");
     let remote_hashes = read_remote_hashes(dir)?;
+    let by_us = remote_written_by_device(dir, &cfg.device_id)?;
+    let baseline = cfg.last_synced_hashes.as_ref();
 
     progress("hashing local config files");
     let local_hashes = collect_local_config_hashes(Some(cfg))?;
@@ -268,14 +331,15 @@ pub fn diff_config(cfg: &LocalConfig, dir: &Path) -> Result<Vec<ConfigDiff>> {
         .map(|key| {
             let local_hash = get_hash(&local_hashes, key);
             let remote_hash = get_hash(&remote_hashes, key);
-            let status = match (&local_hash, &remote_hash) {
-                (None, None) => DiffStatus::Missing,
-                (Some(l), Some(r)) if l == r => DiffStatus::Same,
-                (Some(_), None) => DiffStatus::LocalOnly,
-                (None, Some(_)) => DiffStatus::RemoteOnly,
-                _ => DiffStatus::LocalNewerOrDifferent,
-            };
+            let base_hash = baseline.and_then(|b| get_hash(b, key));
+            let status = classify_file(
+                local_hash.as_deref(),
+                remote_hash.as_deref(),
+                base_hash.as_deref(),
+                by_us,
+            );
             ConfigDiff {
+                key,
                 file: key.as_str().to_string(),
                 local_hash,
                 remote_hash,
@@ -283,4 +347,54 @@ pub fn diff_config(cfg: &LocalConfig, dir: &Path) -> Result<Vec<ConfigDiff>> {
             }
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_same_and_sides() {
+        assert_eq!(classify_file(None, None, None, false), DiffStatus::Missing);
+        assert_eq!(
+            classify_file(Some("a"), Some("a"), Some("a"), false),
+            DiffStatus::Same
+        );
+        assert_eq!(
+            classify_file(Some("a"), None, None, false),
+            DiffStatus::LocalOnly
+        );
+        assert_eq!(
+            classify_file(None, Some("a"), None, false),
+            DiffStatus::RemoteOnly
+        );
+    }
+
+    #[test]
+    fn classify_with_baseline() {
+        assert_eq!(
+            classify_file(Some("local"), Some("base"), Some("base"), false),
+            DiffStatus::LocalChanged
+        );
+        assert_eq!(
+            classify_file(Some("base"), Some("remote"), Some("base"), false),
+            DiffStatus::RemoteChanged
+        );
+        assert_eq!(
+            classify_file(Some("local"), Some("remote"), Some("base"), false),
+            DiffStatus::Conflict
+        );
+    }
+
+    #[test]
+    fn classify_without_baseline_uses_last_writer() {
+        assert_eq!(
+            classify_file(Some("local"), Some("remote"), None, true),
+            DiffStatus::LocalChanged
+        );
+        assert_eq!(
+            classify_file(Some("local"), Some("remote"), None, false),
+            DiffStatus::Conflict
+        );
+    }
 }

@@ -7,7 +7,7 @@
 - **Transport:** private GitHub repo (default `<gh-login>/zync-store`) via `git` + **GitHub CLI (`gh`)** auth  
 - **Mode:** on demand only — no background watcher  
 - **Compare:** SHA-256 of normalized file contents (not mtime)  
-- **Conflicts:** remote wins by default; previous local file saved as `.bak-zync-*`. Override with `zync sync --force-push` (local overwrites cloud)  
+- **Conflicts:** only when **both** local and remote changed since this device’s last sync; then remote wins (local saved as `.bak-zync-*`). If only local changed → push; only remote → pull. Override cloud with `zync sync --force-push`
 - **Future:** thin Zed extension may shell out to this binary; full sync inside WASM extensions is not viable with current Zed APIs  
 
 ## Commands (behavior)
@@ -16,7 +16,7 @@
 |---|---|
 | `zync` | Print help and exit |
 | `zync init` | Setup only: confirm/`gh` session, create or select store repo, write local zync config. **Does not sync** |
-| `zync sync` | Refresh store (fetch unless fresh), compare hashes, pull and/or push. `--refresh` forces fetch. `--force-push` skips pull and overwrites cloud with local (confirm / `--yes`) |
+| `zync sync` | Refresh store (fetch unless fresh), compare vs baseline + remote hashes, pull and/or push. `--refresh` forces fetch. `--force-push` skips pull and overwrites cloud with local (confirm / `--yes`) |
 | `zync status` | Show init state + pending diffs against store clone. Reuses recent refresh; `--refresh` forces fetch |
 | `zync login` | Ensure `gh` auth (confirm before reusing existing session) |
 | `zync purge` | Print plan + confirm; delete local config + store cache. `--remote` also deletes GitHub repo |
@@ -26,7 +26,7 @@ Destructive or identity-sensitive actions (reuse `gh`, create/use repo, purge) r
 
 ## Local state
 
-- **Config:** platform zync config dir → `config.json` (`deviceId`, `remote.repo`/`branch`, categories, `lastSyncedAt`, …)  
+- **Config:** platform zync config dir → `config.json` (`deviceId`, `remote.repo`/`branch`, categories, `lastSyncedAt`, `lastSyncedHashes`, …)  
 - **Cache:** platform zync cache dir → `stores/<owner_repo>/` — git clone of the store  
 - Env overrides: `ZYNC_CONFIG_DIR`, `ZYNC_CACHE_DIR`, `ZED_CONFIG_DIR`, `ZED_DATA_DIR`  
 
@@ -57,14 +57,19 @@ threads/…              # Phase 2 (not implemented)
 
 1. Load local zync config (must be initialized).  
 2. **Prepare store dir:** clone if missing; else if last refresh older than **TTL 120s** (or `--refresh`) → `git fetch` + checkout + `reset --hard origin/<branch>`; if still fresh → skip fetch (local checkout/reset only). Stamp lives in `.git/zync-last-refresh` (shared by `sync` and `status`). Successful push also updates the stamp.  
-3. Read remote `manifest.json` hashes; hash local Zed files.  
-4. Decide (unless `--force-push`):
-   - no remote hashes → push local  
-   - all same → no-op  
-   - remote-only / different → pull (backup locals), then push  
+3. Read remote `manifest.json` hashes; hash local Zed files; compare to **`lastSyncedHashes`** baseline (saved on this device after each successful sync).  
+4. Decide **per file** (unless `--force-push`):
+   - no remote data → push local  
+   - same hashes → no-op  
    - local-only → push  
+   - remote-only → pull (backup locals)  
+   - differ + baseline == remote → **local changed only → push**  
+   - differ + baseline == local → **remote changed only → pull**  
+   - differ + both ≠ baseline → **conflict → pull** (remote wins, `.bak-zync-*`)  
+   - no baseline yet: if `manifest.updatedBy.deviceId` is this device → treat as local-changed (push); else conflict (pull)  
+   Mixed outcomes: pull needed files first, then push if any file needs upload.  
    With `--force-push`: skip pull; always push local over remote (after confirm).  
-5. Update `lastSyncedAt`.  
+5. Save `lastSyncedHashes` from post-sync local files; update `lastSyncedAt`.  
 
 Progress lines go to **stderr** (`… …`).
 

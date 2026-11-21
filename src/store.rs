@@ -125,6 +125,10 @@ pub struct LocalConfig {
     pub categories: SyncCategories,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_synced_at: Option<String>,
+    /// Remote (and agreed) content hashes as of the last successful sync on this device.
+    /// Used to tell “only local changed” vs “only remote” vs real conflict.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_synced_hashes: Option<ManifestHashes>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sync: Option<LegacySync>,
 }
@@ -141,6 +145,7 @@ impl LocalConfig {
             device_id: Uuid::new_v4(),
             categories: SyncCategories::default(),
             last_synced_at: None,
+            last_synced_hashes: None,
             sync: None,
         }
     }
